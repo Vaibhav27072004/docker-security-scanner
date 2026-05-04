@@ -1,0 +1,24 @@
+name: 🏷️ Update Status Badges
+
+on:
+  workflow_run:
+    workflows: ["🔒 Docker Security Scan"]
+    types: [completed]
+  schedule:
+    - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
+
+permissions:
+  contents: write
+
+jobs:
+  update-badges:
+    name: Refresh README badges
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write badge status
+        run: |
+          STATUS="${{ github.event.workflow_run.conclusion || 'passing' }}"
+          echo "Last scan: ${STATUS}" >> $GITHUB_STEP_SUMMARY

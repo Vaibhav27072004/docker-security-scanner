@@ -1,0 +1,235 @@
+name: 🔒 Docker Security Scan
+
+on:
+  push:
+    branches: [main, develop, "release/**"]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: "Docker image to scan (e.g. nginx:1.25)"
+        required: false
+        default: ""
+      fail_on_severity:
+        description: "Fail on severity (CRITICAL,HIGH,MEDIUM)"
+        required: false
+        default: "CRITICAL,HIGH"
+  schedule:
+    # Daily scan at 02:00 UTC
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  security-events: write
+
+jobs:
+  # ─── Lint & Static Analysis ─────────────────────────────────────────────────
+  lint:
+    name: 🧹 Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install black flake8 pylint mypy isort
+          pip install -r requirements.txt
+
+      - name: Check formatting (Black)
+        run: black --check --diff src/ tests/
+
+      - name: Lint with flake8
+        run: flake8 src/ tests/ --max-line-length=100 --extend-ignore=E203
+
+      - name: Sort imports check (isort)
+        run: isort --check-only src/ tests/
+
+      - name: Type check (mypy)
+        run: mypy src/ --ignore-missing-imports --no-strict-optional
+
+  # ─── Unit Tests ─────────────────────────────────────────────────────────────
+  test:
+    name: 🧪 Test Suite (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-fail-under=85 \
+            -v
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.11'
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false
+
+  # ─── Security Scan ──────────────────────────────────────────────────────────
+  security-scan:
+    name: 🔍 Security Scan — ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - examples/vulnerable-app
+          - examples/secure-app
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install scanner dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      # ── Install Trivy ──────────────────────────────────────────────────────
+      - name: Install Trivy
+        run: |
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | \
+            gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | \
+            sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -q
+          sudo apt-get install -y trivy
+          trivy --version
+
+      # ── Install Hadolint ───────────────────────────────────────────────────
+      - name: Install Hadolint
+        run: |
+          HADOLINT_VERSION="v2.12.0"
+          sudo curl -sSL \
+            "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64" \
+            -o /usr/local/bin/hadolint
+          sudo chmod +x /usr/local/bin/hadolint
+          hadolint --version
+
+      # ── Install Gitleaks ───────────────────────────────────────────────────
+      - name: Install Gitleaks
+        run: |
+          GITLEAKS_VERSION="v8.18.4"
+          curl -sSL \
+            "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+          gitleaks version
+
+      # ── Build the example Docker image ────────────────────────────────────
+      - name: Build Docker image
+        id: docker_build
+        run: |
+          IMAGE_TAG="${{ matrix.target == 'examples/vulnerable-app' && 'demo-vulnerable:latest' || 'demo-secure:latest' }}"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          docker build -t "${IMAGE_TAG}" ${{ matrix.target }}
+
+      # ── Run the Security Scanner ──────────────────────────────────────────
+      - name: Run Docker Security Scanner
+        id: scan
+        continue-on-error: true
+        env:
+          FAIL_ON_SEVERITY: ${{ github.event.inputs.fail_on_severity || 'CRITICAL,HIGH' }}
+          REPORT_OUTPUT_DIR: reports
+          REPORT_FORMATS: html,json,markdown
+          SBOM_FORMATS: cyclonedx,spdx
+          LOG_LEVEL: INFO
+        run: |
+          python -m src.scanner image \
+            "${{ steps.docker_build.outputs.image_tag }}" \
+            --dockerfile "${{ matrix.target }}/Dockerfile" \
+            --scan-path "${{ matrix.target }}" \
+            --output-dir reports
+
+      # ── Post Markdown summary as PR comment ───────────────────────────────
+      - name: Post scan results to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const reportPath = 'reports/security_report.md';
+            if (fs.existsSync(reportPath)) {
+              const body = fs.readFileSync(reportPath, 'utf8');
+              const header = `## Security Scan Results — \`${{ matrix.target }}\`\n\n`;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: header + body,
+              });
+            }
+
+      # ── Upload reports as artifacts ───────────────────────────────────────
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports-${{ matrix.target == 'examples/vulnerable-app' && 'vulnerable' || 'secure' }}
+          path: reports/
+          retention-days: 30
+
+      # ── Fail the job based on scan result ────────────────────────────────
+      - name: Enforce security gate
+        if: steps.scan.outcome == 'failure' && matrix.target == 'examples/secure-app'
+        run: |
+          echo "❌ Security gate failed for production image!"
+          exit 1
+
+  # ─── Summary ────────────────────────────────────────────────────────────────
+  summary:
+    name: 📋 Workflow Summary
+    runs-on: ubuntu-latest
+    needs: [lint, test, security-scan]
+    if: always()
+    steps:
+      - name: Generate workflow summary
+        run: |
+          echo "## 🔒 Docker Security Scanner — Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint & Type Check | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Suite | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scan triggered by: **${{ github.event_name }}** on \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
