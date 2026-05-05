@@ -52,7 +52,7 @@ Every year, enterprises spend **$4.24M USD** remediating container vulnerabiliti
 ### 1. Installation
 
 ```bash
-git clone https://github.com/yourusername/docker-security-scanner.git && \
+git clone https://github.com/Vaibhav27072004/docker-security-scanner.git && \
   cd docker-security-scanner && \
   pip install -r requirements.txt && \
   pip install -e .
@@ -920,21 +920,12 @@ This project stands on the shoulders of giants:
 - **Gitleaks** — Secret scanning by Zack Rice, adopted enterprise-wide
 - **CycloneDX** — SBOM standard maintained by OWASP
 
----
-
-## 📞 Support
-
-- **Bug Reports**: [GitHub Issues](https://github.com/yourusername/docker-security-scanner/issues)
-- **Security Reports**: [security@yourdomain.com](mailto:security@yourdomain.com) (do not open public issue)
-
----
 
 <div align="center">
 
 **Building better software security, one image at a time.**
 
-Made with ❤️ by [Your Name](https://github.com/yourusername)
+Made for learning by Vaibhav(https://github.com/yourusername)
 
-*Part of the [container security](https://github.com/topics/container-security) community.*
 
 </div>
