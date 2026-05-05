@@ -925,7 +925,7 @@ This project stands on the shoulders of giants:
 
 **Building better software security, one image at a time.**
 
-Made for learning by Vaibhav(https://github.com/yourusername)
+Made for learning of DevSecOps by Vaibhav Kumar Sahu
 
 
 </div>
