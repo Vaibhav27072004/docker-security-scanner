@@ -19,7 +19,7 @@
 
 ### The Problem in Production
 
-Every year, enterprises spend **$4.24M USD** remediating container vulnerabilities discovered post-deployment (Gartner 2024). The Docker Image Security Scanner **moves this detection left** — catching 95% of known CVEs at build time, not when they're actively exploited in production.
+Every year, enterprises spend **$4.24M USD** remediating container vulnerabilities discovered post-deployment (Gartner 2024). The Automated Docker Image Security Scanner **moves this detection left** — catching 95% of known CVEs at build time, not when they're actively exploited in production.
 
 ### What This Scanner Does
 
